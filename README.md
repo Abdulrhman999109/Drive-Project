@@ -38,4 +38,21 @@ Body example:
 }
 ```
 GET /v1/blobs/:id
-Get blob by id.
+Get blob by id
+
+
+#Testing
+Run test
+```bash
+npm run test
+```
+
+Run integration tests:
+```bash
+npm run test:int
+```
+
+Run integration tests (database only):
+```bash
+npm run test:int:db
+```
