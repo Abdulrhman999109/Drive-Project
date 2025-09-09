@@ -16,14 +16,14 @@ npm run dev
 If you use Docker for MinIO / FTP, you must create and configure the containers manually before starting the server.
 I used pgAdmin to manage Postgres.
 
-#Token
+# Token
 Generate a token:
 
 ```bash
 
 npm run getToken
 ```
-#API
+# API
 POST /v1/blobs
 Upload a new blob.
 
@@ -41,7 +41,8 @@ GET /v1/blobs/:id
 Get blob by id
 
 
-#Testing
+# Testing
+
 Run test
 ```bash
 npm run test
