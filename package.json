@@ -4,8 +4,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon  --watch src --ext ts --exec tsx src/app.ts"
+    "dev": "nodemon  --watch src --ext ts --exec tsx src/app.ts",
+    "getToken": "node -r dotenv/config -e \"console.log(require('jsonwebtoken').sign({user:{id:'client'}}, process.env.JWT_SECRET || 'dev-secret-change-me', {algorithm:'HS256', expiresIn: process.env.JWT_EXPIRES || '15m'}))\"",
+    "test": "vitest run",
+    "test:int": "vitest run src/tests/integration/blobs.db.spec.ts",
+    "test:int:db": "vitest run src/tests/integration/blobs.db.spec.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,17 +16,23 @@
   "description": "",
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.3.1",
+    "@types/supertest": "^6.0.3",
     "nodemon": "^3.1.10",
     "prisma": "^6.15.0",
+    "supertest": "^7.1.4",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "@prisma/client": "^6.15.0",
+    "basic-ftp": "^5.0.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
-    "express-async-handler": "^1.2.0"
+    "express-async-handler": "^1.2.0",
+    "jsonwebtoken": "^9.0.2"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

@@ -7,11 +7,11 @@ export const BlobsController = {
     const { id, data, backend } = req.body || {};
 
     if (!id || typeof id !== "string") {
-      res.status(400).json({ success: false, message: "id is required (string)" });
+      res.status(400).json({ success: false, message: "id is required string" });
       return;
     }
     if (!data || typeof data !== "string") {
-      res.status(400).json({ success: false, message: "data (base64 string) is required" });
+      res.status(400).json({ success: false, message: "data base64 string is required" });
       return;
     }
     const chosenBackend = (backend as any) || "db";

@@ -1,7 +1,9 @@
-import { writeFile, mkdir, stat } from "fs/promises";
+import { readFile ,writeFile, mkdir, stat } from "fs/promises";
 import path from "path";
 import { prisma } from "../config/prisma.js";
 import { STORAGE_DIR } from "../config/storage.js";
+import { s3Get , s3Put } from "../lib/s3/client.js";
+import { ftpGet , ftpPut } from "../lib/ftp/client.js";
 
 export type BlobInput = {
   id: string;
@@ -16,29 +18,29 @@ function normalizeBase64(input: string): string {
 
 function strictDecodeBase64OrThrow(b64: string): Buffer {
   if (typeof b64 !== "string" || b64.length === 0) {
-    const err: any = new Error("Invalid Base64 payload (empty)");
+    const err: any = new Error("Invalid Base64 payload :empty");
     err.StatusCode = 400;
     throw err;
   }
   const s = normalizeBase64(b64);
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
-    const err: any = new Error("Invalid Base64 payload (illegal chars)");
+    const err: any = new Error("Invalid Base64 payload: illegal chars");
     err.StatusCode = 400;
     throw err;
   }
   if (s.length % 4 !== 0) {
-    const err: any = new Error("Invalid Base64 payload (bad padding length)");
+    const err: any = new Error("Invalid Base64 payload :bad padding length");
     err.StatusCode = 400;
     throw err;
   }
   const buf = Buffer.from(s, "base64");
   if (buf.length === 0) {
-    const err: any = new Error("Invalid Base64 payload (decoded empty)");
+    const err: any = new Error("Invalid Base64 payload :decoded empty");
     err.StatusCode = 400;
     throw err;
   }
   if (buf.toString("base64") !== s) {
-    const err: any = new Error("Invalid Base64 payload (roundtrip mismatch)");
+    const err: any = new Error("Invalid Base64 payload :roundtrip mismatch");
     err.StatusCode = 400;
     throw err;
   }
@@ -58,8 +60,8 @@ export const BlobsService = {
       err.StatusCode = 400;
       throw err;
     }
-    if (!["db", "local"].includes(backend)) {
-      const err: any = new Error("Unsupported backend");
+    if (!["db", "local" , "s3" , "ftp"].includes(backend)) {
+      const err: any = new Error("unsupported backend");
       err.StatusCode = 400;
       throw err;
     }
@@ -67,44 +69,70 @@ export const BlobsService = {
     const buffer = strictDecodeBase64OrThrow(dataBase64);
     const size = buffer.length;
 
-    await prisma.$transaction(async (tx) => {
-      const exists = await tx.metaBlob.findUnique({ where: { id } });
-      if (exists) {
-        const err: any = new Error("id already exists");
-        err.StatusCode = 400;
-        throw err;
-      }
+    const exists = await prisma.metaBlob.findUnique({ where: { id } });
+    if (exists) {
+      const err: any = new Error("id already exists");
+      err.StatusCode = 400;
+      throw err;
+    }
 
-      if (backend === "db") {
+    if (backend === "db") {
+      await prisma.$transaction(async (tx) => {
         await tx.dataBlob.create({ data: { id, data: buffer } });
         await tx.metaBlob.create({ data: { id, backend, size } });
-        return;
-      }
+      });
+      return { id, size, backend };
+    }
 
+    if (backend === "local") {
       try {
-        await mkdir(STORAGE_DIR, { recursive: true });
-
-        const fullPath = path.resolve(STORAGE_DIR, id);
+        const base = path.resolve(STORAGE_DIR);
+        const fullPath = path.resolve(base, id);
+        if (!fullPath.startsWith(base + path.sep)) {
+          const err: any = new Error("Invalid id");
+          err.StatusCode = 400;
+          throw err;
+        }
+        await mkdir(path.dirname(fullPath), { recursive: true });
         await writeFile(fullPath, buffer, { flag: "wx" });
-
         const st = await stat(fullPath);
         if (st.size !== size) {
-          const err: any = new Error("Written file size mismatch");
+          const err: any = new Error("written file size mismatch");
           err.StatusCode = 500;
           throw err;
         }
       } catch (e) {
-        const err: any = new Error(
-          `Failed to write to local storage: ${(e as Error).message}`
-        );
+        const err: any = new Error(`failed to write to local storage: ${(e as Error).message}`);
         err.StatusCode = 500;
         throw err;
       }
-      await tx.metaBlob.create({ data: { id, backend, size } });
-    });
+      await prisma.metaBlob.create({ data: { id, backend, size } });
+      return { id, size, backend };
 
-    return { id, size, backend };
+    } else if (backend === "s3") {
+      try {
+        await s3Put(id, buffer);
+      } catch (e) {
+        const err: any = new Error(`failed to write to S3: ${(e as Error).message}`);
+        err.StatusCode = 502;
+        throw err;
+      }
+      await prisma.metaBlob.create({ data: { id, backend, size } });
+      return { id, size, backend };
+
+    } else if (backend === "ftp") {
+      try {
+        await ftpPut(id, buffer);
+      } catch (e) {
+        const err: any = new Error(`failed to write to FTP: ${(e as Error).message}`);
+        err.StatusCode = 502;
+        throw err;
+      }
+      await prisma.metaBlob.create({ data: { id, backend, size } });
+      return { id, size, backend };
+    }
   },
+
 
   async get(id: string) {
     if (!id) {
@@ -130,7 +158,44 @@ export const BlobsService = {
         throw err;
       }
       dataBase64 = Buffer.from(row.data).toString("base64");
+
+    }else if (meta.backend === "local") {
+    try {
+      const base = path.resolve(STORAGE_DIR);
+      const fullPath = path.resolve(base, id);
+      if (!fullPath.startsWith(base + path.sep)) {
+        const err: any = new Error("Invalid id");
+        err.StatusCode = 400;
+        throw err;
+      }
+      const buf = await readFile(fullPath);
+      dataBase64 = buf.toString("base64");
+    } catch (e) {
+      const err: any = new Error(`failed to read local blob: ${(e as Error).message}`);
+      err.StatusCode = 404;
+      throw err;
     }
+
+  } else if (meta.backend === "s3") {
+    try {
+      const buf = await s3Get(id);
+      dataBase64 = buf.toString("base64");
+    } catch (e) {
+      const err: any = new Error(`failed to read from S3: ${(e as Error).message}`);
+      err.StatusCode = 502;
+      throw err;
+    }
+
+  } else if (meta.backend === "ftp") {
+    try {
+      const buf = await ftpGet(id);
+      dataBase64 = buf.toString("base64");
+    } catch (e) {
+      const err: any = new Error(`failed to read from FTP: ${(e as Error).message}`);
+      err.StatusCode = 502;
+      throw err;
+    }
+  }
 
     return {
       id: meta.id,
